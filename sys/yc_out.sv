@@ -53,11 +53,11 @@ wire [7:0] blue = din[7:0];
 logic [7:0] red_1, blue_1, red_2, blue_2;
 
 logic signed [20:0] yr = 0, yb = 0, yg = 0;
-logic [7:0] luma_d0;
-logic [7:0] luma_d1;
-logic [7:0] luma_d2;
-logic [7:0] luma_d3;
-logic [7:0] luma_d4;
+(* altera_attribute = "-name AUTO_SHIFT_REGISTER_RECOGNITION OFF" *) logic [7:0] luma_d0;
+(* altera_attribute = "-name AUTO_SHIFT_REGISTER_RECOGNITION OFF" *) logic [7:0] luma_d1;
+(* altera_attribute = "-name AUTO_SHIFT_REGISTER_RECOGNITION OFF" *) logic [7:0] luma_d2;
+(* altera_attribute = "-name AUTO_SHIFT_REGISTER_RECOGNITION OFF" *) logic [7:0] luma_d3;
+(* altera_attribute = "-name AUTO_SHIFT_REGISTER_RECOGNITION OFF" *) logic [7:0] luma_d4;
 
 typedef struct {
 	logic signed [20:0] y;
