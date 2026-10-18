@@ -195,6 +195,10 @@ ENTITY ascal IS
 		himax : IN natural RANGE 0 TO 4095 :=0;
 		vimin : IN natural RANGE 0 TO 4095 :=0;
 		vimax : IN natural RANGE 0 TO 4095 :=0;
+		-- Autodetect mode vertical crop. Lines removed at top / bottom of the
+		-- detected image (per field when interlaced). Ignored if too large.
+		vicrop_t : IN natural RANGE 0 TO 4095 :=0;
+		vicrop_b : IN natural RANGE 0 TO 4095 :=0;
 
 		-- Detected input image size
 		i_hdmax : OUT natural RANGE 0 TO 4095;
@@ -359,6 +363,7 @@ ARCHITECTURE rtl OF ascal IS
 	SIGNAL i_himax,i_vimax : uint12;
 	SIGNAL i_vsize,i_vmaxmin,i_vmin,i_vmax,i_vcpt : uint12;
 	SIGNAL i_iauto : std_logic;
+	SIGNAL i_vicrop_t,i_vicrop_b : uint12;
 	SIGNAL i_mode : unsigned(4 DOWNTO 0);
 	SIGNAL i_format : unsigned(1 DOWNTO 0);
 	SIGNAL i_ven,i_sof : std_logic;
@@ -1179,6 +1184,8 @@ BEGIN
 			i_freeze <=freeze; -- <ASYNC>
 			i_bob_deint <= bob_deint;
 			i_iauto<=iauto; -- <ASYNC>
+			i_vicrop_t<=vicrop_t; -- <ASYNC>
+			i_vicrop_b<=vicrop_b; -- <ASYNC>
 			i_wreq<='0';
 			i_wr<='0';
 
@@ -1275,9 +1282,14 @@ BEGIN
 					-- Auto-size
 					i_hmin<=0;
 					i_hmax<=i_himax;
-					i_vmin<=0;
 					IF i_pvs='1' AND i_vs_pre='0' AND (i_inter='0' OR i_pfl='0') THEN
-						i_vmax<=i_vimax;
+						IF i_vicrop_t + i_vicrop_b < i_vimax THEN
+							i_vmin<=i_vicrop_t;
+							i_vmax<=i_vimax - i_vicrop_b;
+						ELSE
+							i_vmin<=0;
+							i_vmax<=i_vimax;
+						END IF;
 					END IF;
 				ELSE
 					-- Forced image

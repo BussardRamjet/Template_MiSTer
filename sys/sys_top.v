@@ -325,6 +325,7 @@ reg        coef_wr = 0;
 wire[12:0] ARX, ARY;
 reg [11:0] VSET = 0, HSET = 0;
 reg        FREESCALE = 0;
+reg [11:0] VCROP_T = 0, VCROP_B = 0;
 reg  [2:0] scaler_flt;
 reg        lowlat = 0;
 reg        cfg_done = 0;
@@ -408,6 +409,7 @@ always@(posedge clk_sys) begin
 `endif
 			if(io_din[7:0] == 'h42) io_dout_sys <= {1'b1, frame_cnt};
 			if(io_din[7:0] == 'h44) io_dout_sys <= 1;
+			if(io_din[7:0] == 'h45) io_dout_sys <= 1;
 		end
 		else begin
 			cnt <= cnt + 1'd1;
@@ -472,6 +474,12 @@ always@(posedge clk_sys) begin
 			if(cmd == 'h2B) scaler_flt <= io_din[2:0];
 			if(cmd == 'h37) {FREESCALE,HSET} <= {io_din[15],io_din[11:0]};
 			if(cmd == 'h38) vs_line <= io_din[11:0];
+			if(cmd == 'h45) begin
+				case(cnt[3:0])
+					0: VCROP_T <= io_din[11:0];
+					1: VCROP_B <= io_din[11:0];
+				endcase
+			end
 			if(cmd == 'h39) begin
 				case(cnt[3:0])
 					 0: {vol_boost,acx_att} <= io_din[6:0];
@@ -760,6 +768,8 @@ wire         bob_deint;
 		.himax    (0),
 		.vimin    (0),
 		.vimax    (0),
+		.vicrop_t (VCROP_T),
+		.vicrop_b (VCROP_B),
 
 		.o_clk    (clk_hdmi),
 		.o_ce     (scaler_out),
@@ -1467,8 +1477,8 @@ reg  [39:0] PhaseInc;
 
 
 	wire VGA_DISABLE;
-	wire [23:0] vgas_o;
-	wire vgas_hs, vgas_vs, vgas_cs, vgas_de;
+	wire [23:0] vgas_o, vgas_o_t;
+	wire vgas_hs, vgas_vs, vgas_cs, vgas_de, vgas_hs_t, vgas_vs_t, vgas_cs_t, vgas_de_t;
 	`ifndef MISTER_DEBUG_NOHDMI
 		vga_out vga_scaler_out
 		(
@@ -1478,16 +1488,59 @@ reg  [39:0] PhaseInc;
 			.vsync(hdmi_vs_osd),
 			.csync(hdmi_cs_osd),
 			.de(hdmi_de_osd),
-			.dout(vgas_o),
+			.dout(vgas_o_t),
 			.din({24{hdmi_de_osd}} & hdmi_data_osd),
-			.hsync_o(vgas_hs),
-			.vsync_o(vgas_vs),
-			.csync_o(vgas_cs),
-			.de_o(vgas_de)
+			.hsync_o(vgas_hs_t),
+			.vsync_o(vgas_vs_t),
+			.csync_o(vgas_cs_t),
+			.de_o(vgas_de_t)
 		);
+
+		`ifndef MISTER_DISABLE_YC
+		`ifndef MISTER_DISABLE_YC_SCALER
+			// Y/C encoder on the scaler output. Lets S-Video/CVBS carry the scaler's
+			// fixed output timing (e.g. 15kHz 60Hz NTSC from a 50Hz PAL core with
+			// triple buffering). Main computes PhaseInc for the HDMI pixel clock.
+			wire [23:0] ycs_o;
+			wire        ycs_hs, ycs_vs, ycs_cs, ycs_de;
+
+			yc_out yc_scaler_out
+			(
+				.clk(clk_hdmi),
+				.PAL_EN(pal_en),
+				.CVBS(cvbs),
+				.PHASE_INC(PhaseInc),
+				.COLORBURST_RANGE(ColorBurst_Range),
+				.hsync(hdmi_hs_osd),
+				.vsync(hdmi_vs_osd),
+				.csync(hdmi_cs_osd),
+				.de(hdmi_de_osd),
+				.dout(ycs_o),
+				.din({24{hdmi_de_osd}} & hdmi_data_osd),
+				.hsync_o(ycs_hs),
+				.vsync_o(ycs_vs),
+				.csync_o(ycs_cs),
+				.de_o(ycs_de)
+			);
+
+			wire vgas_yc = yc_en;
+			assign {vgas_o, vgas_hs, vgas_vs, vgas_cs, vgas_de} = ~yc_en ? {vgas_o_t, vgas_hs_t, vgas_vs_t, vgas_cs_t, vgas_de_t} : {ycs_o, ycs_hs, ycs_vs, ycs_cs, ycs_de};
+		`else
+			wire vgas_yc = 0;
+			assign {vgas_o, vgas_hs, vgas_vs, vgas_cs, vgas_de} = {vgas_o_t, vgas_hs_t, vgas_vs_t, vgas_cs_t, vgas_de_t};
+		`endif
+		`else
+			wire vgas_yc = 0;
+			assign {vgas_o, vgas_hs, vgas_vs, vgas_cs, vgas_de} = {vgas_o_t, vgas_hs_t, vgas_vs_t, vgas_cs_t, vgas_de_t};
+		`endif
 	`else
+		wire vgas_yc = 0;
 		assign {vgas_o, vgas_hs, vgas_vs, vgas_cs, vgas_de} = 0;
 	`endif
+
+	// Y/C needs negative sync regardless of the scaler modeline polarity.
+	wire vgas_hpol = ~vgas_yc & HS[12];
+	wire vgas_vpol = ~vgas_yc & VS[12];
 
 	wire [23:0] vga_o, vga_o_t;
 	wire vga_hs, vga_vs, vga_cs, vga_de, vga_hs_t, vga_vs_t, vga_cs_t, vga_de_t;
@@ -1518,8 +1571,8 @@ reg  [39:0] PhaseInc;
 	wire cs1 = vgas_en ? vgas_cs : vga_cs;
 	wire de1 = vgas_en ? vgas_de : vga_de;
 
-	assign VGA_VS = av_dis ? 1'bZ      :(((vgas_en ? (~vgas_vs ^ VS[12])                         : VGA_DISABLE ? 1'd1 : ~vga_vs) | csync_en) & subcarrier_out);
-	assign VGA_HS = av_dis ? 1'bZ      :  (vgas_en ? ((csync_en ? ~vgas_cs : ~vgas_hs) ^ HS[12]) : VGA_DISABLE ? 1'd1 : (csync_en ? ~vga_cs : ~vga_hs));
+	assign VGA_VS = av_dis ? 1'bZ      :(((vgas_en ? (~vgas_vs ^ vgas_vpol)                         : VGA_DISABLE ? 1'd1 : ~vga_vs) | csync_en) & subcarrier_out);
+	assign VGA_HS = av_dis ? 1'bZ      :  (vgas_en ? ((csync_en ? ~vgas_cs : ~vgas_hs) ^ vgas_hpol) : VGA_DISABLE ? 1'd1 : (csync_en ? ~vga_cs : ~vga_hs));
 	assign VGA_R  = av_dis ? 6'bZZZZZZ :   vgas_en ? vgas_o[23:18]                               : VGA_DISABLE ? 6'd0 : vga_o[23:18];
 	assign VGA_G  = av_dis ? 6'bZZZZZZ :   vgas_en ? vgas_o[15:10]                               : VGA_DISABLE ? 6'd0 : vga_o[15:10];
 	assign VGA_B  = av_dis ? 6'bZZZZZZ :   vgas_en ? vgas_o[7:2]                                 : VGA_DISABLE ? 6'd0 : vga_o[7:2]  ;
